@@ -1,0 +1,40 @@
+[package]
+name = "moviestream"
+version = "1.0.0"
+description = "MovieStream — Personal Movie Library Desktop App"
+authors = ["MovieStream Authors"]
+edition = "2021"
+
+[lib]
+name = "moviestream_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rusqlite = { version = "0.32", features = ["bundled"] }
+uuid = { version = "1.10", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1.40", features = ["full"] }
+walkdir = "2.5"
+regex = "1.10"
+thiserror = "1.0"
+reqwest = { version = "0.12", features = ["json"] }
+libloading = "0.8"
+rfd = "0.15"
+dirs = "5.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+async-trait = "0.1"
+lazy_static = "1.5"
+urlencoding = "2.1"
+axum = "0.7"
+tokio-util = { version = "0.7", features = ["io"] }
+tower-http = { version = "0.5", features = ["cors", "fs"] }
+
+[dev-dependencies]
+tempfile = "3.13"
