@@ -192,6 +192,12 @@ Contributions are welcome. To get started:
 
 ---
 
-## License
+## Licensing
 
-This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
+This project is dually licensed. You may choose to use, distribute, and modify this software under the terms of either:
+
+* The **GNU General Public License v2.0** (`LICENSE-GPLv2`)
+* The **GNU Lesser General Public License v2.1** (`LICENSE-LGPLv2.1`)
+
+For more details, please refer to the respective license files in the root directory.
+
