@@ -70,7 +70,7 @@ pub fn run() {
             let tmdb_service = Arc::new(TmdbService::new(None));
 
             let media_analyzer = Arc::new(MediaAnalyzer::new());
-            let metadata_resolver = Arc::new(MetadataResolver::new(metadata_provider, artwork_cache_dir));
+            let metadata_resolver = Arc::new(MetadataResolver::new(metadata_provider, artwork_cache_dir.clone()));
             let duplicate_resolver = Arc::new(DuplicateResolver::new(movie_repo.clone()));
 
             let scanner = Arc::new(Scanner::with_tv_support(
@@ -94,8 +94,16 @@ pub fn run() {
             ));
 
             let stream_server = tauri::async_runtime::block_on(async {
-                crate::services::MediaStreamServer::start().await.expect("Failed to start MediaStreamServer")
+                crate::services::MediaStreamServer::start(artwork_cache_dir).await.expect("Failed to start MediaStreamServer")
             });
+
+            // Register existing library source paths as allowed for streaming
+            if let Ok(sources) = source_repo.list_sources() {
+                for src in &sources {
+                    stream_server.register_allowed_path(std::path::Path::new(&src.path));
+                }
+            }
+
 
             let playback_service = Arc::new(PlaybackService::with_full_engine(
                 vlc_player,

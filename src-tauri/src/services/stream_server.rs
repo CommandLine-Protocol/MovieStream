@@ -1,23 +1,29 @@
 use axum::{
     body::Body,
-    extract::Query,
+    extract::{Query, State as AxumState},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
     Router,
 };
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::io::SeekFrom;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
+
+/// Shared set of canonical directory paths that the stream server is allowed to serve files from.
+/// Populated with registered library sources and the artwork cache directory.
+type AllowedPaths = Arc<RwLock<HashSet<PathBuf>>>;
 
 pub struct MediaStreamServer {
     port: u16,
+    allowed_paths: AllowedPaths,
 }
 
 #[derive(Deserialize)]
@@ -26,18 +32,36 @@ struct StreamQuery {
 }
 
 impl MediaStreamServer {
-    pub async fn start() -> Result<Arc<Self>, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn start(
+        artwork_cache_dir: PathBuf,
+    ) -> Result<Arc<Self>, Box<dyn std::error::Error + Send + Sync>> {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let port = listener.local_addr()?.port();
 
+        // Initialize allowed paths with the artwork cache directory
+        let mut initial_paths = HashSet::new();
+        if let Ok(canonical) = std::fs::canonicalize(&artwork_cache_dir) {
+            initial_paths.insert(canonical);
+        } else {
+            initial_paths.insert(artwork_cache_dir);
+        }
+        let allowed_paths: AllowedPaths = Arc::new(RwLock::new(initial_paths));
+        let allowed_for_router = allowed_paths.clone();
+
+        // Only allow requests from Tauri webview origins
         let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any);
+            .allow_origin([
+                "tauri://localhost".parse().unwrap(),
+                "https://tauri.localhost".parse().unwrap(),
+                "http://localhost".parse().unwrap(),
+            ])
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any);
 
         let app = Router::new()
             .route("/stream", get(handle_stream))
             .route("/subtitles", get(handle_subtitles))
+            .with_state(allowed_for_router)
             .layer(cors);
 
         tokio::spawn(async move {
@@ -49,7 +73,32 @@ impl MediaStreamServer {
         });
 
         tracing::info!("MediaStreamServer listening on http://127.0.0.1:{}", port);
-        Ok(Arc::new(Self { port }))
+        Ok(Arc::new(Self { port, allowed_paths }))
+    }
+
+    /// Register a directory as an allowed base path for serving files.
+    /// Call this when a new library source is added.
+    pub fn register_allowed_path(&self, dir: &Path) {
+        if let Ok(canonical) = std::fs::canonicalize(dir) {
+            if let Ok(mut paths) = self.allowed_paths.write() {
+                paths.insert(canonical);
+            }
+        } else if let Ok(mut paths) = self.allowed_paths.write() {
+            paths.insert(dir.to_path_buf());
+        }
+    }
+
+    /// Remove a directory from the allowed paths.
+    /// Call this when a library source is removed.
+    pub fn unregister_allowed_path(&self, dir: &Path) {
+        if let Ok(canonical) = std::fs::canonicalize(dir) {
+            if let Ok(mut paths) = self.allowed_paths.write() {
+                paths.remove(&canonical);
+            }
+        }
+        if let Ok(mut paths) = self.allowed_paths.write() {
+            paths.remove(&dir.to_path_buf());
+        }
     }
 
     pub fn get_stream_url(&self, file_path: &str) -> String {
@@ -73,12 +122,47 @@ impl MediaStreamServer {
     }
 }
 
+/// Validate that the given path is a descendant of one of the allowed directories.
+/// Returns the canonical path if valid, or an error.
+fn validate_path(
+    requested_path: &Path,
+    allowed_paths: &AllowedPaths,
+) -> Result<PathBuf, (StatusCode, String)> {
+    // Canonicalize to resolve symlinks, "..", and "." components
+    let canonical = std::fs::canonicalize(requested_path).map_err(|_| {
+        (StatusCode::NOT_FOUND, "File not found".to_string())
+    })?;
+
+    let paths = allowed_paths.read().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal server error".to_string(),
+        )
+    })?;
+
+    for allowed_dir in paths.iter() {
+        if canonical.starts_with(allowed_dir) {
+            return Ok(canonical);
+        }
+    }
+
+    tracing::warn!(
+        "Path traversal blocked: requested '{}' (canonical: '{}') is not within any allowed directory",
+        requested_path.display(),
+        canonical.display()
+    );
+    Err((StatusCode::FORBIDDEN, "Access denied".to_string()))
+}
+
 async fn handle_stream(
+    AxumState(allowed_paths): AxumState<AllowedPaths>,
     Query(query): Query<StreamQuery>,
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, String)> {
-    let path = PathBuf::from(&query.path);
-    if !path.exists() || !path.is_file() {
+    let requested_path = PathBuf::from(&query.path);
+    let path = validate_path(&requested_path, &allowed_paths)?;
+
+    if !path.is_file() {
         return Err((StatusCode::NOT_FOUND, "File not found".to_string()));
     }
 
@@ -132,10 +216,6 @@ async fn handle_stream(
                 header::CONTENT_RANGE,
                 HeaderValue::from_str(&format!("bytes {}-{}/{}", start, end, file_size)).unwrap(),
             );
-            headers.insert(
-                header::ACCESS_CONTROL_ALLOW_ORIGIN,
-                HeaderValue::from_static("*"),
-            );
 
             return Ok(response);
         }
@@ -157,20 +237,21 @@ async fn handle_stream(
         header::CONTENT_LENGTH,
         HeaderValue::from_str(&file_size.to_string()).unwrap(),
     );
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue::from_static("*"),
-    );
 
     Ok(response)
 }
 
 async fn handle_subtitles(
+    AxumState(allowed_paths): AxumState<AllowedPaths>,
     Query(query): Query<StreamQuery>,
 ) -> Result<Response, (StatusCode, String)> {
-    let path = PathBuf::from(&query.path);
-    if !path.exists() {
-        return Err((StatusCode::NOT_FOUND, "Subtitle file not found".to_string()));
+    let requested_path = PathBuf::from(&query.path);
+    let path = validate_path(&requested_path, &allowed_paths)?;
+
+    // Verify the file has a subtitle extension
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+    if !matches!(ext.to_lowercase().as_str(), "srt" | "vtt" | "ass" | "ssa" | "sub") {
+        return Err((StatusCode::FORBIDDEN, "Not a subtitle file".to_string()));
     }
 
     let content = tokio::fs::read_to_string(&path).await.map_err(|e| {
@@ -181,7 +262,7 @@ async fn handle_subtitles(
     })?;
 
     // If SRT, convert to WebVTT format
-    let vtt_content = if path.extension().and_then(|s| s.to_str()).map_or(false, |ext| ext.eq_ignore_ascii_case("srt")) {
+    let vtt_content = if ext.eq_ignore_ascii_case("srt") {
         convert_srt_to_vtt(&content)
     } else {
         content
@@ -191,10 +272,6 @@ async fn handle_subtitles(
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("text/vtt; charset=utf-8"),
-    );
-    response.headers_mut().insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue::from_static("*"),
     );
 
     Ok(response)

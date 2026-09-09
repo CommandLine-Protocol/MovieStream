@@ -9,7 +9,7 @@ async fn test_media_stream_server_range_requests() {
     let test_data = vec![0x42u8; 10240];
     tokio::fs::write(&sample_video, &test_data).await.unwrap();
 
-    let server = MediaStreamServer::start().await.expect("Server starts");
+    let server = MediaStreamServer::start(tmp.path().to_path_buf()).await.expect("Server starts");
     let stream_url = server.get_stream_url(&sample_video.to_string_lossy());
 
     let client = reqwest::Client::new();
@@ -59,7 +59,7 @@ async fn test_media_stream_server_subtitle_conversion() {
     let srt_content = "1\n00:00:01,000 --> 00:00:04,000\nHello World\n";
     tokio::fs::write(&srt_file, srt_content).await.unwrap();
 
-    let server = MediaStreamServer::start().await.expect("Server starts");
+    let server = MediaStreamServer::start(tmp.path().to_path_buf()).await.expect("Server starts");
     let subtitle_url = server.get_subtitle_url(&srt_file.to_string_lossy());
 
     let client = reqwest::Client::new();
@@ -74,3 +74,20 @@ async fn test_media_stream_server_subtitle_conversion() {
     assert!(vtt_text.starts_with("WEBVTT"));
     assert!(vtt_text.contains("00:00:01.000 --> 00:00:04.000"));
 }
+
+#[tokio::test]
+async fn test_media_stream_server_blocks_path_traversal() {
+    let tmp_allowed = tempdir().unwrap();
+    let tmp_forbidden = tempdir().unwrap();
+
+    let secret_file = tmp_forbidden.path().join("secret.txt");
+    tokio::fs::write(&secret_file, "super secret content").await.unwrap();
+
+    let server = MediaStreamServer::start(tmp_allowed.path().to_path_buf()).await.expect("Server starts");
+    let stream_url = server.get_stream_url(&secret_file.to_string_lossy());
+
+    let client = reqwest::Client::new();
+    let resp = client.get(&stream_url).send().await.unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::FORBIDDEN);
+}
+
