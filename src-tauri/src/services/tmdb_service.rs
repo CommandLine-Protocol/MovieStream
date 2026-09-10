@@ -120,18 +120,23 @@ impl TmdbService {
             .filter(|k| !k.trim().is_empty())
     }
 
+    fn tmdb_get(&self, url: &str, key: &str) -> reqwest::RequestBuilder {
+        self.client
+            .get(url)
+            .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", key))
+    }
+
     pub async fn search_movies(&self, query: &str, year: Option<u16>) -> AppResult<Vec<TmdbMovieResult>> {
         if let Some(key) = self.get_key() {
             let mut url = format!(
-                "https://api.themoviedb.org/3/search/movie?api_key={}&query={}&include_adult=false",
-                key,
+                "https://api.themoviedb.org/3/search/movie?query={}&include_adult=false",
                 urlencoding::encode(query)
             );
             if let Some(y) = year {
                 url.push_str(&format!("&primary_release_year={}", y));
             }
 
-            let resp = self.client.get(&url).send().await.map_err(|e| AppError::Metadata(e.to_string()))?;
+            let resp = self.tmdb_get(&url, &key).send().await.map_err(|e| AppError::Metadata(e.to_string()))?;
             if resp.status().is_success() {
                 #[derive(Deserialize)]
                 struct Res { results: Option<Vec<RawMovieResult>> }
@@ -171,10 +176,10 @@ impl TmdbService {
     pub async fn get_movie_details(&self, movie_id: i64) -> AppResult<TmdbMovieDetail> {
         if let Some(key) = self.get_key() {
             let url = format!(
-                "https://api.themoviedb.org/3/movie/{}?api_key={}&append_to_response=credits",
-                movie_id, key
+                "https://api.themoviedb.org/3/movie/{}?append_to_response=credits",
+                movie_id
             );
-            let resp = self.client.get(&url).send().await.map_err(|e| AppError::Metadata(e.to_string()))?;
+            let resp = self.tmdb_get(&url, &key).send().await.map_err(|e| AppError::Metadata(e.to_string()))?;
             if resp.status().is_success() {
                 #[derive(Deserialize)]
                 struct RawDetail {
@@ -229,15 +234,14 @@ impl TmdbService {
     pub async fn search_tv(&self, query: &str, year: Option<u16>) -> AppResult<Vec<TmdbTvResult>> {
         if let Some(key) = self.get_key() {
             let mut url = format!(
-                "https://api.themoviedb.org/3/search/tv?api_key={}&query={}&include_adult=false",
-                key,
+                "https://api.themoviedb.org/3/search/tv?query={}&include_adult=false",
                 urlencoding::encode(query)
             );
             if let Some(y) = year {
                 url.push_str(&format!("&first_air_date_year={}", y));
             }
 
-            let resp = self.client.get(&url).send().await.map_err(|e| AppError::Metadata(e.to_string()))?;
+            let resp = self.tmdb_get(&url, &key).send().await.map_err(|e| AppError::Metadata(e.to_string()))?;
             if resp.status().is_success() {
                 #[derive(Deserialize)]
                 struct Res { results: Option<Vec<RawTvResult>> }
@@ -274,10 +278,10 @@ impl TmdbService {
     pub async fn get_tv_details(&self, series_id: i64) -> AppResult<TmdbTvDetail> {
         if let Some(key) = self.get_key() {
             let url = format!(
-                "https://api.themoviedb.org/3/tv/{}?api_key={}&append_to_response=credits",
-                series_id, key
+                "https://api.themoviedb.org/3/tv/{}?append_to_response=credits",
+                series_id
             );
-            let resp = self.client.get(&url).send().await.map_err(|e| AppError::Metadata(e.to_string()))?;
+            let resp = self.tmdb_get(&url, &key).send().await.map_err(|e| AppError::Metadata(e.to_string()))?;
             if resp.status().is_success() {
                 #[derive(Deserialize)]
                 struct RawTvDetail {
@@ -349,10 +353,10 @@ impl TmdbService {
     pub async fn get_tv_episodes(&self, series_id: i64, season_number: u32) -> AppResult<Vec<TmdbEpisodeDetail>> {
         if let Some(key) = self.get_key() {
             let url = format!(
-                "https://api.themoviedb.org/3/tv/{}/season/{}?api_key={}",
-                series_id, season_number, key
+                "https://api.themoviedb.org/3/tv/{}/season/{}",
+                series_id, season_number
             );
-            let resp = self.client.get(&url).send().await.map_err(|e| AppError::Metadata(e.to_string()))?;
+            let resp = self.tmdb_get(&url, &key).send().await.map_err(|e| AppError::Metadata(e.to_string()))?;
             if resp.status().is_success() {
                 #[derive(Deserialize)]
                 struct RawSeasonResp { episodes: Option<Vec<RawEp>> }
@@ -391,11 +395,10 @@ impl TmdbService {
     pub async fn get_trending(&self, media_type: &str) -> AppResult<Vec<TmdbTrendingItem>> {
         if let Some(key) = self.get_key() {
             let url = format!(
-                "https://api.themoviedb.org/3/trending/{}/week?api_key={}",
-                if media_type == "tv" { "tv" } else { "movie" },
-                key
+                "https://api.themoviedb.org/3/trending/{}/week",
+                if media_type == "tv" { "tv" } else { "movie" }
             );
-            let resp = self.client.get(&url).send().await.map_err(|e| AppError::Metadata(e.to_string()))?;
+            let resp = self.tmdb_get(&url, &key).send().await.map_err(|e| AppError::Metadata(e.to_string()))?;
             if resp.status().is_success() {
                 #[derive(Deserialize)]
                 struct Res { results: Option<Vec<RawItem>> }

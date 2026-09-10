@@ -90,8 +90,7 @@ impl MetadataProvider for OpenMovieMetadataProvider {
         if let Some(k) = api_key {
             // Use TMDB API if key is provided
             let mut url = format!(
-                "https://api.themoviedb.org/3/search/movie?api_key={}&query={}",
-                k,
+                "https://api.themoviedb.org/3/search/movie?query={}",
                 urlencoding::encode(title_guess)
             );
             if let Some(year) = year_guess {
@@ -100,7 +99,11 @@ impl MetadataProvider for OpenMovieMetadataProvider {
 
             let resp = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async {
-                    self.client.get(&url).send().await
+                    self.client
+                        .get(&url)
+                        .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", k))
+                        .send()
+                        .await
                 })
             }).map_err(|e| AppError::Metadata(format!("Network request failed: {}", e)))?;
 
@@ -321,13 +324,17 @@ impl MetadataProvider for OpenMovieMetadataProvider {
         };
 
         let url = format!(
-            "https://api.themoviedb.org/3/movie/{}?api_key={}&append_to_response=credits",
-            raw_tmdb_id, api_key
+            "https://api.themoviedb.org/3/movie/{}?append_to_response=credits",
+            raw_tmdb_id
         );
 
         let resp = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                self.client.get(&url).send().await
+                self.client
+                    .get(&url)
+                    .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", api_key))
+                    .send()
+                    .await
             })
         }).map_err(|e| AppError::Metadata(format!("Network request failed: {}", e)))?;
 

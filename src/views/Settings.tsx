@@ -208,42 +208,11 @@ export const Settings: React.FC = () => {
       {settings && (
         <section className="glass-panel" style={{ padding: 28, marginBottom: 28 }}>
           <h3 style={{ fontSize: "1.25rem", fontWeight: 700, marginBottom: 8 }}>
-            Metadata & Cover Art Provider
+            Metadata & Cover Art
           </h3>
-          <p style={{ color: "var(--text-secondary)", fontSize: "0.88rem", marginBottom: 16 }}>
+          <p style={{ color: "var(--text-secondary)", fontSize: "0.88rem", margin: 0 }}>
             MovieStream automatically discovers high-resolution cover art, backdrops, and synopses using built-in zero-config public metadata sources and local directory scrapers.
           </p>
-          <div>
-            <label style={{ display: "block", fontSize: "0.85rem", fontWeight: 600, marginBottom: 6 }}>
-              TheMovieDB (TMDb) API Key (Optional)
-            </label>
-            <input
-              type="password"
-              placeholder="Leave blank for automatic zero-config metadata"
-              value={settings.metadata.active_provider_id === "tmdb" ? "" : settings.metadata.active_provider_id}
-              onChange={(e) => {
-                const val = e.target.value;
-                setSettings({
-                  ...settings,
-                  metadata: { ...settings.metadata, active_provider_id: val },
-                });
-              }}
-              onBlur={() => handleSaveSettings(settings)}
-              style={{
-                width: "100%",
-                maxWidth: 480,
-                padding: "8px 12px",
-                background: "rgba(255, 255, 255, 0.08)",
-                border: "1px solid var(--border-subtle)",
-                borderRadius: "var(--radius-md)",
-                color: "#fff",
-                fontSize: "0.9rem",
-              }}
-            />
-            <span style={{ display: "block", fontSize: "0.78rem", color: "var(--text-muted)", marginTop: 6 }}>
-              You can also specify <code>TMDB_API_KEY</code> in a <code>.env</code> file.
-            </span>
-          </div>
         </section>
       )}
 
