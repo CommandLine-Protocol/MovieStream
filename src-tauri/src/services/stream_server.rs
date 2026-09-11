@@ -11,11 +11,43 @@ use std::collections::HashSet;
 use std::io::SeekFrom;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::Instant;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 use tower_http::cors::CorsLayer;
+
+/// Token-bucket/window-based rate limiter for incoming stream server requests.
+pub struct StreamRateLimiter {
+    requests_this_sec: AtomicUsize,
+    window_start: Mutex<Instant>,
+    max_requests_per_sec: usize,
+}
+
+impl StreamRateLimiter {
+    pub fn new(max_requests_per_sec: usize) -> Self {
+        Self {
+            requests_this_sec: AtomicUsize::new(0),
+            window_start: Mutex::new(Instant::now()),
+            max_requests_per_sec,
+        }
+    }
+
+    pub fn check(&self) -> bool {
+        let mut start = self.window_start.lock().unwrap();
+        let now = Instant::now();
+        if now.duration_since(*start).as_secs() >= 1 {
+            *start = now;
+            self.requests_this_sec.store(1, Ordering::Relaxed);
+            true
+        } else {
+            let count = self.requests_this_sec.fetch_add(1, Ordering::Relaxed);
+            count < self.max_requests_per_sec
+        }
+    }
+}
 
 /// Shared set of canonical directory paths that the stream server is allowed to serve files from.
 /// Populated with registered library sources and the artwork cache directory.
@@ -48,21 +80,45 @@ impl MediaStreamServer {
         let allowed_paths: AllowedPaths = Arc::new(RwLock::new(initial_paths));
         let allowed_for_router = allowed_paths.clone();
 
-        // Only allow requests from Tauri webview origins
+        // Only allow requests from Tauri webview origins and local dev servers
         let cors = CorsLayer::new()
-            .allow_origin([
-                "tauri://localhost".parse().unwrap(),
-                "https://tauri.localhost".parse().unwrap(),
-                "http://localhost".parse().unwrap(),
-            ])
-            .allow_methods(tower_http::cors::Any)
+            .allow_origin(tower_http::cors::AllowOrigin::predicate(
+                |origin: &HeaderValue, _| {
+                    let s = origin.to_str().unwrap_or("");
+                    s == "tauri://localhost"
+                        || s == "https://tauri.localhost"
+                        || s.starts_with("http://localhost:")
+                        || s.starts_with("http://127.0.0.1:")
+                        || s == "http://localhost"
+                        || s == "http://127.0.0.1"
+                },
+            ))
+            .allow_methods([axum::http::Method::GET, axum::http::Method::HEAD, axum::http::Method::OPTIONS])
             .allow_headers(tower_http::cors::Any);
+
+        let rate_limiter = Arc::new(StreamRateLimiter::new(100));
+        let limiter_for_mw = rate_limiter.clone();
 
         let app = Router::new()
             .route("/stream", get(handle_stream))
             .route("/subtitles", get(handle_subtitles))
             .with_state(allowed_for_router)
-            .layer(cors);
+            .layer(cors)
+            .layer(tower::limit::ConcurrencyLimitLayer::new(64))
+            .layer(axum::middleware::from_fn(
+                move |req: axum::extract::Request, next: axum::middleware::Next| {
+                    let limiter = limiter_for_mw.clone();
+                    async move {
+                        if !limiter.check() {
+                            return Err((
+                                StatusCode::TOO_MANY_REQUESTS,
+                                "Rate limit exceeded".to_string(),
+                            ));
+                        }
+                        Ok::<_, (StatusCode, String)>(next.run(req).await)
+                    }
+                },
+            ));
 
         tokio::spawn(async move {
             let _ = axum::serve(
@@ -349,4 +405,19 @@ fn convert_srt_to_vtt(srt: &str) -> String {
         vtt.push('\n');
     }
     vtt
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_stream_rate_limiter() {
+        let limiter = StreamRateLimiter::new(3);
+        assert!(limiter.check());
+        assert!(limiter.check());
+        assert!(limiter.check());
+        // 4th request exceeds rate limit of 3 req/sec
+        assert!(!limiter.check());
+    }
 }

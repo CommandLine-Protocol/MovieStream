@@ -76,6 +76,51 @@ async fn test_media_stream_server_subtitle_conversion() {
 }
 
 #[tokio::test]
+async fn test_media_stream_server_cors_restrictions() {
+    let tmp = tempdir().unwrap();
+    let sample_video = tmp.path().join("sample.mp4");
+    tokio::fs::write(&sample_video, vec![0x42u8; 1024]).await.unwrap();
+
+    let server = MediaStreamServer::start(tmp.path().to_path_buf()).await.expect("Server starts");
+    let stream_url = server.get_stream_url(&sample_video.to_string_lossy());
+
+    let client = reqwest::Client::new();
+
+    // 1. Request with evil origin should NOT receive access-control-allow-origin
+    let evil_resp = client
+        .get(&stream_url)
+        .header("Origin", "https://malicious-website.com")
+        .send()
+        .await
+        .unwrap();
+    assert!(evil_resp.headers().get("access-control-allow-origin").is_none());
+
+    // 2. Request with valid Tauri origin SHOULD receive access-control-allow-origin
+    let valid_resp = client
+        .get(&stream_url)
+        .header("Origin", "tauri://localhost")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        valid_resp.headers().get("access-control-allow-origin").unwrap(),
+        "tauri://localhost"
+    );
+
+    // 3. Request with valid localhost dev server origin SHOULD receive access-control-allow-origin
+    let dev_resp = client
+        .get(&stream_url)
+        .header("Origin", "http://localhost:1420")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        dev_resp.headers().get("access-control-allow-origin").unwrap(),
+        "http://localhost:1420"
+    );
+}
+
+#[tokio::test]
 async fn test_media_stream_server_blocks_path_traversal() {
     let tmp_allowed = tempdir().unwrap();
     let tmp_forbidden = tempdir().unwrap();
@@ -90,4 +135,6 @@ async fn test_media_stream_server_blocks_path_traversal() {
     let resp = client.get(&stream_url).send().await.unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::FORBIDDEN);
 }
+
+
 
