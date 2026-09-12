@@ -129,3 +129,38 @@ fn test_playback_service_session_resume_and_completion() {
     assert_eq!(recent.len(), 1);
     assert_eq!(recent[0].id, movie_id);
 }
+
+#[test]
+fn test_playback_service_load_external_subtitle_validation() {
+    let tmp = tempdir().unwrap();
+    let db = SqliteDb::new_in_memory().unwrap();
+    let playback_repo = Arc::new(SqlitePlaybackStateRepository::new(db.clone())) as Arc<dyn PlaybackStateRepository>;
+    let history_repo = Arc::new(SqliteWatchHistoryRepository::new(db)) as Arc<dyn WatchHistoryRepository>;
+    let player = Arc::new(Mutex::new(Box::new(VlcMediaPlayer::new()) as Box<dyn MediaPlayer>));
+    let service = PlaybackService::new(player, playback_repo, history_repo);
+
+    // 1. Non-existent file
+    let res = service.load_external_subtitle("/tmp/does_not_exist_sub_12345.srt");
+    assert!(res.is_err());
+
+    // 2. Invalid extension
+    let invalid_ext = tmp.path().join("sub.mp4");
+    std::fs::write(&invalid_ext, b"test").unwrap();
+    let res = service.load_external_subtitle(&invalid_ext.to_string_lossy());
+    assert!(res.is_err());
+
+    // 3. Valid subtitle file
+    let valid_sub = tmp.path().join("sub.srt");
+    std::fs::write(&valid_sub, b"1\n00:00:01,000 --> 00:00:02,000\nHello\n").unwrap();
+    let res = service.load_external_subtitle(&valid_sub.to_string_lossy());
+    assert!(res.is_ok());
+
+    // 4. Oversized subtitle (>10MB)
+    let large_sub = tmp.path().join("huge.srt");
+    let file = std::fs::File::create(&large_sub).unwrap();
+    file.set_len(10 * 1024 * 1024 + 10).unwrap();
+    drop(file);
+    let res = service.load_external_subtitle(&large_sub.to_string_lossy());
+    assert!(res.is_err());
+}
+

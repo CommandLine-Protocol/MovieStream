@@ -112,6 +112,33 @@ pub async fn load_external_subtitle(
     path: String,
     playback_service: State<'_, Arc<PlaybackService>>,
 ) -> Result<(), AppError> {
+    let sub_path = std::path::Path::new(&path);
+    if !sub_path.exists() || !sub_path.is_file() {
+        return Err(AppError::Validation("Subtitle file does not exist".to_string()));
+    }
+
+    let ext = sub_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if !matches!(ext.as_str(), "srt" | "vtt" | "ass" | "ssa" | "sub") {
+        return Err(AppError::Validation(format!(
+            "Invalid subtitle format: '{}'. Supported formats are: srt, vtt, ass, ssa, sub",
+            ext
+        )));
+    }
+
+    const MAX_SUBTITLE_SIZE: u64 = 10 * 1024 * 1024;
+    let meta = std::fs::metadata(sub_path).map_err(|e| AppError::Io(e.to_string()))?;
+    if meta.len() > MAX_SUBTITLE_SIZE {
+        return Err(AppError::Validation(format!(
+            "Subtitle file exceeds maximum allowed size of 10MB (file is {} bytes)",
+            meta.len()
+        )));
+    }
+
     playback_service.load_external_subtitle(&path)
 }
 

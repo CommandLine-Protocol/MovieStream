@@ -310,6 +310,25 @@ async fn handle_subtitles(
         return Err((StatusCode::FORBIDDEN, "Not a subtitle file".to_string()));
     }
 
+    // Verify file size does not exceed 10MB to prevent memory exhaustion
+    const MAX_SUBTITLE_SIZE: u64 = 10 * 1024 * 1024;
+    let metadata = tokio::fs::metadata(&path).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Cannot read subtitle metadata: {}", e),
+        )
+    })?;
+
+    if metadata.len() > MAX_SUBTITLE_SIZE {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            format!(
+                "Subtitle file exceeds maximum allowed size of 10MB ({} bytes)",
+                metadata.len()
+            ),
+        ));
+    }
+
     let content = tokio::fs::read_to_string(&path).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,

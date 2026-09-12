@@ -136,5 +136,36 @@ async fn test_media_stream_server_blocks_path_traversal() {
     assert_eq!(resp.status(), reqwest::StatusCode::FORBIDDEN);
 }
 
+#[tokio::test]
+async fn test_media_stream_server_subtitle_size_limit() {
+    let tmp = tempdir().unwrap();
+    let oversized_srt = tmp.path().join("large.srt");
+    let file = tokio::fs::File::create(&oversized_srt).await.unwrap();
+    file.set_len(10 * 1024 * 1024 + 100).await.unwrap();
+    drop(file);
+
+    let server = MediaStreamServer::start(tmp.path().to_path_buf()).await.expect("Server starts");
+    let subtitle_url = server.get_subtitle_url(&oversized_srt.to_string_lossy());
+
+    let client = reqwest::Client::new();
+    let resp = client.get(&subtitle_url).send().await.unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn test_media_stream_server_subtitle_rejects_non_subtitle() {
+    let tmp = tempdir().unwrap();
+    let txt_file = tmp.path().join("notes.txt");
+    tokio::fs::write(&txt_file, "just text").await.unwrap();
+
+    let server = MediaStreamServer::start(tmp.path().to_path_buf()).await.expect("Server starts");
+    let subtitle_url = server.get_subtitle_url(&txt_file.to_string_lossy());
+
+    let client = reqwest::Client::new();
+    let resp = client.get(&subtitle_url).send().await.unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::FORBIDDEN);
+}
+
+
 
 
