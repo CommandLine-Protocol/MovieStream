@@ -438,6 +438,83 @@ impl TmdbService {
         Ok(vec![])
     }
 
+    pub async fn get_popular_movies(&self) -> AppResult<Vec<TmdbMovieResult>> {
+        if let Some(key) = self.get_key() {
+            let url = "https://api.themoviedb.org/3/movie/popular";
+            let resp = self.tmdb_get(url, &key).send().await.map_err(|e| AppError::Metadata(e.to_string()))?;
+            if resp.status().is_success() {
+                #[derive(Deserialize)]
+                struct Res { results: Option<Vec<RawMovieResult>> }
+                #[derive(Deserialize)]
+                struct RawMovieResult {
+                    id: i64,
+                    title: Option<String>,
+                    original_title: Option<String>,
+                    overview: Option<String>,
+                    release_date: Option<String>,
+                    poster_path: Option<String>,
+                    backdrop_path: Option<String>,
+                    vote_average: Option<f32>,
+                    genre_ids: Option<Vec<i64>>,
+                }
+                if let Ok(data) = resp.json::<Res>().await {
+                    let results = data.results.unwrap_or_default().into_iter().map(|m| TmdbMovieResult {
+                        id: m.id,
+                        title: m.title.unwrap_or_else(|| "Unknown".to_string()),
+                        original_title: m.original_title,
+                        overview: m.overview,
+                        release_date: m.release_date,
+                        poster_path: m.poster_path.map(|p| format!("https://image.tmdb.org/t/p/w500{}", p)),
+                        backdrop_path: m.backdrop_path.map(|b| format!("https://image.tmdb.org/t/p/original{}", b)),
+                        vote_average: m.vote_average,
+                        genre_ids: m.genre_ids,
+                    }).collect();
+                    return Ok(results);
+                }
+            }
+        }
+
+        // Fallback for zero-config: iTunes top movies
+        self.search_itunes_movies("top").await
+    }
+
+    pub async fn get_popular_tv(&self) -> AppResult<Vec<TmdbTvResult>> {
+        if let Some(key) = self.get_key() {
+            let url = "https://api.themoviedb.org/3/tv/popular";
+            let resp = self.tmdb_get(url, &key).send().await.map_err(|e| AppError::Metadata(e.to_string()))?;
+            if resp.status().is_success() {
+                #[derive(Deserialize)]
+                struct Res { results: Option<Vec<RawTvResult>> }
+                #[derive(Deserialize)]
+                struct RawTvResult {
+                    id: i64,
+                    name: Option<String>,
+                    original_name: Option<String>,
+                    overview: Option<String>,
+                    first_air_date: Option<String>,
+                    poster_path: Option<String>,
+                    backdrop_path: Option<String>,
+                    vote_average: Option<f32>,
+                }
+                if let Ok(data) = resp.json::<Res>().await {
+                    let results = data.results.unwrap_or_default().into_iter().map(|s| TmdbTvResult {
+                        id: s.id,
+                        name: s.name.unwrap_or_else(|| "Unknown Series".to_string()),
+                        original_name: s.original_name,
+                        overview: s.overview,
+                        first_air_date: s.first_air_date,
+                        poster_path: s.poster_path.map(|p| format!("https://image.tmdb.org/t/p/w500{}", p)),
+                        backdrop_path: s.backdrop_path.map(|b| format!("https://image.tmdb.org/t/p/original{}", b)),
+                        vote_average: s.vote_average,
+                    }).collect();
+                    return Ok(results);
+                }
+            }
+        }
+
+        Ok(vec![])
+    }
+
     async fn search_itunes_movies(&self, query: &str) -> AppResult<Vec<TmdbMovieResult>> {
         let itunes_url = format!(
             "https://itunes.apple.com/search?media=movie&term={}&limit=10",

@@ -72,12 +72,12 @@ pub async fn get_trending(
 pub async fn get_popular_movies(
     tmdb_service: State<'_, Arc<TmdbService>>,
 ) -> Result<Vec<TmdbMovieResult>, AppError> {
-    tmdb_service.search_movies("popular", None).await
+    tmdb_service.get_popular_movies().await
 }
 
 #[tauri::command]
 pub async fn get_popular_tv(
     tmdb_service: State<'_, Arc<TmdbService>>,
 ) -> Result<Vec<TmdbTvResult>, AppError> {
-    tmdb_service.search_tv("popular", None).await
+    tmdb_service.get_popular_tv().await
 }
